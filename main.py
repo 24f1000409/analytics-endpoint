@@ -1,7 +1,8 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -14,6 +15,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# IMPORTANT: Starlette's CORSMiddleware only attaches CORS headers to
+# responses that flow back through it normally. If an unhandled exception
+# escapes all the way to Starlette's ServerErrorMiddleware, the resulting
+# 500 response bypasses CORSMiddleware entirely and the browser reports it
+# as a (misleading) "CORS blocked" error instead of a 500. This catch-all
+# handler converts any unexpected exception into a normal JSONResponse so
+# it passes back through CORSMiddleware and keeps the CORS headers intact.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # --- Fill these in before deploying ---
 API_KEY = "ak_9l1lh7e1binqia0f66ahhmct"
@@ -47,12 +60,14 @@ def analytics(
     revenue = sum(e.amount for e in events if e.amount > 0)
 
     # top_user: user whose positive-amount total is highest
-    user_totals: dict[str, float] = {}
+    user_totals: Dict[str, float] = {}
     for e in events:
         if e.amount > 0:
             user_totals[e.user] = user_totals.get(e.user, 0) + e.amount
 
-    top_user = max(user_totals, key=user_totals.get) if user_totals else None
+    top_user: Optional[str] = None
+    if user_totals:
+        top_user = max(user_totals.items(), key=lambda item: item[1])[0]
 
     return {
         "email": EMAIL,
